@@ -86,21 +86,32 @@ if( workflow.profile == 'awsbatch') {
 /*
  * Create a channel for input read files
  */ 
- if(params.readPaths){
-     if(params.singleEnd){
-         Channel
-             .from(params.readPaths)
-             .map { row -> [ row[0], [file(row[1][0])]] }
-             .ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
-             .into { read_files_fastqc; read_files_trimming }
-     } else {
-         Channel
-             .from(params.readPaths)
-             .map { row -> [ row[0], [file(row[1][0]), file(row[1][1])]] }
-             .ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
-             .into { read_files_fastqc; read_files_trimming }
-     }
- } else {
+if(params.readPathsFile){
+
+    // study_name	count_matrix	pheno_meta	sample_meta	vcf
+    Channel.fromPath(params.readPathsFile)
+        .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
+        .splitCsv(header: true, sep: '\t', strip: true)
+        .map{row -> [ row.study_name, file(row.vcf)]}
+        .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples; temp_ch_vcf }
+
+    Channel.fromPath(params.readPathsFile)
+        .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
+        .splitCsv(header: true, sep: '\t', strip: true)
+        .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta)]}
+        .set { create_QTLTools_input_wo_vcf }
+
+
+    // Channel.from(readPaths)
+    //         .map { row -> [ row[0], row[4] ] }
+    //         .ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
+    //         .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples; temp_ch_vcf }
+
+    // Channel.from(readPaths)
+    //         .map { row -> [ row[0], row[1], row[2], row[3] ] }
+    //         .ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
+    //         .into { create_QTLTools_input_wo_vcf ; create_QTLTools_input_wo_vcf_temp}
+} else {
      Channel
          .fromPath( params.expression_matrix)
          .ifEmpty { exit 1, "Cannot find any expression_matrix file: ${params.expression_matrix}\n" }
@@ -120,6 +131,9 @@ if( workflow.profile == 'awsbatch') {
          
  }
 
+
+//temp_ch_vcf.subscribe { println "############## vcf file channel: $it" }
+// create_QTLTools_input_wo_vcf_temp.subscribe { println "############## qtltools input file channel: $it" }
 
 // Header log info
 log.info """=======================================================
@@ -176,10 +190,10 @@ process extract_all_variant_info {
     // publishDir "${params.outdir}/final", mode: 'copy'
 
     input:
-    file vcf from genotype_vcf_extract_variant_info
+    set study_name, file(vcf) from genotype_vcf_extract_variant_info
     
     output:
-    file "${vcf.simpleName}.variant_information.txt.gz" into variant_info_create_QTLTools_input
+    set study_name, file("${vcf.simpleName}.variant_information.txt.gz") into variant_info_create_QTLTools_input
 
     script:
     if (params.is_imputed) {
@@ -193,6 +207,10 @@ process extract_all_variant_info {
     }
 }
 
+
+create_QTLTools_input_wo_vcf.join(variant_info_create_QTLTools_input).into { create_QTLTools_input_ch; temp_ch }
+temp_ch.subscribe { println "############## mapped file: $it" }
+
 /*
  * STEP 1 - Generate QTLTools input files
  */
@@ -204,10 +222,11 @@ process create_QTLTools_input {
     }
 
     input:
-    file expression_matrix from expression_matrix_create_QTLTools_input.collect()
-    file sample_metadata from sample_metadata_create_QTLTools_input.collect()
-    file phenotype_metadata from phenotype_metadata_create_QTLTools_input.collect()
-    file study_variant_info from variant_info_create_QTLTools_input.collect()
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(study_variant_info) from create_QTLTools_input_ch
+    // file expression_matrix from expression_matrix_create_QTLTools_input.collect()
+    // file sample_metadata from sample_metadata_create_QTLTools_input.collect()
+    // file phenotype_metadata from phenotype_metadata_create_QTLTools_input.collect()
+    // file study_variant_info from variant_info_create_QTLTools_input.collect()
     
     output: // set can be used to pass condition val and file as tuple to the channel 
     file "*.bed" into condition_beds mode flatten
@@ -256,7 +275,7 @@ process extract_samples {
 
     input:
     file sample_names from condition_samplenames
-    file genotype_vcf from genotype_vcf_extract_samples.collect()
+    set study_name, file(genotype_vcf) from genotype_vcf_extract_samples.collect()
 
     output:
     set val(sample_names.simpleName), file("${sample_names.simpleName}.vcf.gz") into vcfs_extract_variant_info, vcfs, vcfs_perform_pca 
