@@ -92,14 +92,14 @@ if(params.readPathsFile){
     Channel.fromPath(params.readPathsFile)
         .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
         .splitCsv(header: true, sep: '\t', strip: true)
-        .map{row -> [ row.study_name, file(row.vcf)]}
+        .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta), file(row.vcf)]}
         .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples; temp_ch_vcf }
 
-    Channel.fromPath(params.readPathsFile)
-        .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
-        .splitCsv(header: true, sep: '\t', strip: true)
-        .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta)]}
-        .set { create_QTLTools_input_wo_vcf }
+    // Channel.fromPath(params.readPathsFile)
+    //     .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
+    //     .splitCsv(header: true, sep: '\t', strip: true)
+    //     .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta)]}
+    //     .set { create_QTLTools_input_wo_vcf }
 
 
     // Channel.from(readPaths)
@@ -186,14 +186,14 @@ log.info "========================================="
  * STEP 0 - Extract variant information from VCF
  */
 process extract_all_variant_info {
-    tag "${vcf.simpleName}"
-    // publishDir "${params.outdir}/final", mode: 'copy'
+    tag "${study_name}"
+    // publishDir "${params.outdir}/final/${study_name}", mode: 'copy'
 
     input:
-    set study_name, file(vcf) from genotype_vcf_extract_variant_info
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf) from genotype_vcf_extract_variant_info
     
     output:
-    set study_name, file("${vcf.simpleName}.variant_information.txt.gz") into variant_info_create_QTLTools_input
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file("${vcf.simpleName}.variant_information.txt.gz") into variant_info_create_QTLTools_input
 
     script:
     if (params.is_imputed) {
@@ -207,31 +207,27 @@ process extract_all_variant_info {
     }
 }
 
-
-create_QTLTools_input_wo_vcf.join(variant_info_create_QTLTools_input).into { create_QTLTools_input_ch; temp_ch }
-temp_ch.subscribe { println "############## mapped file: $it" }
-
 /*
  * STEP 1 - Generate QTLTools input files
  */
 process create_QTLTools_input {
-    tag "${expression_matrix.baseName}"
+    tag "${study_name}"
     publishDir "${params.outdir}/", mode: 'copy',
     saveAs: {filename ->
-        if (filename.indexOf(".phenoPCA.tsv") > 0) "PCA/$filename" else null
+        if (filename.indexOf(".phenoPCA.tsv") > 0) "PCA/${study_name}_${filename.substring(0, filename.indexOf("."))}/${study_name}_${filename}" else null
     }
 
     input:
-    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(study_variant_info) from create_QTLTools_input_ch
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file(vcf_variant_info) from variant_info_create_QTLTools_input
     // file expression_matrix from expression_matrix_create_QTLTools_input.collect()
     // file sample_metadata from sample_metadata_create_QTLTools_input.collect()
     // file phenotype_metadata from phenotype_metadata_create_QTLTools_input.collect()
     // file study_variant_info from variant_info_create_QTLTools_input.collect()
     
-    output: // set can be used to pass condition val and file as tuple to the channel 
-    file "*.bed" into condition_beds mode flatten
-    file "*.sample_names.txt" into condition_samplenames mode flatten
-    file "*.phenoPCA.tsv" into pheno_PCAs mode flatten
+    output: 
+    set study_name, file("*.bed") into qtl_group_beds 
+    set study_name, file(vcf), file("*.sample_names.txt") into qtl_group_samplenames 
+    set study_name, file("*.phenoPCA.tsv") into qtl_group_pheno_PCAs//, temp_qtl_group_pheno_PCAs
 
     script:
     """
@@ -239,26 +235,27 @@ process create_QTLTools_input {
         -p "$phenotype_metadata" \\
         -s "$sample_metadata" \\
         -e "$expression_matrix" \\
-        -v "$study_variant_info" \\
+        -v "$vcf_variant_info" \\
         -o "." \\
         -c ${params.cis_window} \\
         -m ${params.mincisvariant}
     """
 }
 
+// temp_qtl_group_pheno_PCAs.subscribe { println "PCA files ------------- : $it" }
 /*
  * STEP 2 - Compres and index input bed file
  */ 
 process compress_bed {
-    tag "${bed_file.baseName}"
+    tag "${study_name}_${bed_file.simpleName}"
     // publishDir "${params.outdir}/compressed_bed", mode: 'copy'
 
     input:
-    file bed_file from condition_beds
+    set study_name, file(bed_file) from qtl_group_beds
 
     output:
-    set val(bed_file.simpleName), file("${bed_file}.gz") into compressed_beds //compressed_beds_perform_pca, compressed_beds_run_nominal, compressed_beds_run_permutation
-    set val(bed_file.simpleName), file("${bed_file}.gz.tbi") into compressed_bed_indexes //compressed_bed_indexes_perform_pca, compressed_bed_indexes_run_nominal, compressed_bed_indexes_run_permutation
+    set val("${study_name}_${bed_file.simpleName}"), file("${bed_file}.gz"), file("${bed_file}.gz.tbi") into compressed_beds//, temp_compressed_beds//, compressed_beds_run_nominal, compressed_beds_run_permutation
+    // set study_name, bed_file.simpleName, file("${bed_file}.gz.tbi") into compressed_bed_indexes //compressed_bed_indexes_perform_pca, compressed_bed_indexes_run_nominal, compressed_bed_indexes_run_permutation
 
     script:
     """
@@ -266,20 +263,21 @@ process compress_bed {
     """
 }
 
+// temp_compressed_beds.subscribe { println "comp beds files ------------- : $it" }
+
 /*
  * STEP 3 - Extract samples from vcf
  */
 process extract_samples {
-    tag "${sample_names.simpleName}"
+    tag "${study_name}_${sample_names.simpleName}"
     // publishDir "${params.outdir}/vcf", mode: 'copy'
 
     input:
-    file sample_names from condition_samplenames
-    set study_name, file(genotype_vcf) from genotype_vcf_extract_samples.collect()
+    set study_name, file(genotype_vcf), file(sample_names) from qtl_group_samplenames
 
     output:
-    set val(sample_names.simpleName), file("${sample_names.simpleName}.vcf.gz") into vcfs_extract_variant_info, vcfs, vcfs_perform_pca 
-    set val(sample_names.simpleName), file("${sample_names.simpleName}.vcf.gz.csi") into vcf_indexes 
+    set val("${study_name}_${sample_names.simpleName}"), file("${sample_names.simpleName}.vcf.gz") into vcfs_extract_variant_info, vcfs, vcfs_perform_pca, vcf_temp 
+    set val("${study_name}_${sample_names.simpleName}"), file("${sample_names.simpleName}.vcf.gz.csi") into vcf_indexes, vcf_index_temp
 
     script:
     """
@@ -288,76 +286,106 @@ process extract_samples {
     """
 }
 
+// vcf_temp.subscribe { println "VCF files ------------- : $it" }
+// vcf_index_temp.subscribe { println "VCF index files ------------- : $it" }
+
+compressed_beds.join(vcfs).join(vcf_indexes).into{ tuple_run_nominal; tuple_run_permutation}
+// temp_joined_beds_vcf.subscribe { println "joined beds vcf files ------------- : $it" }
+
 /*
  * STEP 4 - Extract variant information from VCF
  */
 process extract_variant_info {
-    tag "${vcf.simpleName}"
-    publishDir "${params.outdir}/final", mode: 'copy'
+    tag "${study_qtl_group}"
+    publishDir "${params.outdir}/final/${study_qtl_group}", mode: 'copy'
 
     input:
-    set condition, file(vcf) from vcfs_extract_variant_info
+    set study_qtl_group, file(vcf) from vcfs_extract_variant_info
     
     output:
-    file "${condition}.variant_information.txt.gz"
+    file "${study_qtl_group}.variant_information.txt.gz"
 
     script:
     if (params.is_imputed) {
         """
-        set +o pipefail; bcftools +fill-tags $vcf | bcftools query -f '%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT\\t%TYPE\\t%AC\\t%AN\\t%MAF\\t%R2\\n' | gzip > ${condition}.variant_information.txt.gz
+        set +o pipefail; bcftools +fill-tags $vcf | bcftools query -f '%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT\\t%TYPE\\t%AC\\t%AN\\t%MAF\\t%R2\\n' | gzip > ${study_qtl_group}.variant_information.txt.gz
         """
     } else {
         """
-        set +o pipefail; bcftools +fill-tags $vcf | bcftools query -f '%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT\\t%TYPE\\t%AC\\t%AN\\t%MAF\\tNA\\n' | gzip > ${condition}.variant_information.txt.gz
+        set +o pipefail; bcftools +fill-tags $vcf | bcftools query -f '%CHROM\\t%POS\\t%ID\\t%REF\\t%ALT\\t%TYPE\\t%AC\\t%AN\\t%MAF\\tNA\\n' | gzip > ${study_qtl_group}.variant_information.txt.gz
         """
     }
 }
 
-compressed_beds.join(compressed_bed_indexes).join(vcfs).join(vcf_indexes).into{ tuple_run_nominal; tuple_run_permutation }
-pheno_PCAs.map { file -> [ file.simpleName, file] }.join(vcfs_perform_pca).set{ tuple_perform_pca }
+/*
+ * STEP 3 - Extract samples from vcf
+ */
+process fake_process {
+    tag "${study_name}_${pheno_pca.simpleName}"
+    // publishDir "${params.outdir}/vcf", mode: 'copy'
+
+    input:
+    set study_name, file(pheno_pca) from qtl_group_pheno_PCAs
+
+    output:
+    set val("${study_name}_${pheno_pca.simpleName}"), file(pheno_pca) into qtl_group_pheno_PCAs_new//, temp_pca_condition
+
+    script:
+    """
+    echo faking_set
+    """
+}
+
+vcf_temp.subscribe { println "VCF files ------------- : $it" }
+
+// qtl_group_pheno_PCAs.map { item -> tuple("${item[0]}_${item[1].simpleName}", "${item[1]}" ) }.into {qtl_group_pheno_PCAs_new ; temp_pca_condition}
+// temp_pca_condition.subscribe { println "pca_mapped ------------- : $it" }
+
+qtl_group_pheno_PCAs_new.join(vcfs_perform_pca).set { tuple_perform_pca }
+// temp_debug.subscribe { println "vcf_pca_joined ------------- : $it" }
 
 /*
  * STEP 5 - Perform PCA on the genotype and phenotype data
  */
-process perform_pca {
-    tag "${condition}"
-    publishDir "${params.outdir}/PCA", mode: 'copy'
+process make_pca_covariates {
+    tag "${study_qtl_group}"
+    publishDir "${params.outdir}/PCA/${study_qtl_group}", mode: 'copy'
 
     input:
-    set condition, file(phenotype_pca), file(vcf) from tuple_perform_pca
+    set study_qtl_group, file(phenotype_pca), file(vcf) from tuple_perform_pca
 
     output:
-    file "${condition}.geno.pca*"
-    set val(condition), file("${condition}.covariates.txt") into covariates_run_nominal, covariates_run_permutation
+    file "${study_qtl_group}.geno.pca*"
+    set study_qtl_group, file("${study_qtl_group}.covariates.txt") into covariates_run_nominal, covariates_run_permutation
 
     script:
     """
-    plink2 --vcf $vcf --vcf-half-call h --indep-pairwise 50000 200 0.05 --out ${vcf.simpleName}_pruned_variants --threads ${task.cpus} --memory 12000
-    plink2 --vcf $vcf --vcf-half-call h --extract ${vcf.simpleName}_pruned_variants.prune.in --make-bed --out ${vcf.simpleName}_pruned
-    plink2 -bfile ${vcf.simpleName}_pruned --pca ${params.n_geno_pcs} header tabs
+    plink2 --vcf $vcf --vcf-half-call h --indep-pairwise 50000 200 0.05 --out ${study_qtl_group}_pruned_variants --threads ${task.cpus} --memory 12000
+    plink2 --vcf $vcf --vcf-half-call h --extract ${study_qtl_group}_pruned_variants.prune.in --make-bed --out ${study_qtl_group}_pruned
+    plink2 -bfile ${study_qtl_group}_pruned --pca ${params.n_geno_pcs} header tabs
     cat plink.eigenvec \\
         | sed '1s/IID/genotype_id/' \\
         | sed '1s/PC/geno_PC/g' \\
         | csvtk cut -t -f -"FID" \\
-        | csvtk transpose -t > ${condition}.geno.pca
-    head -n ${params.n_pheno_pcs + 1} $phenotype_pca > ${condition}.covariates.txt    
-    set +o pipefail; tail -n+2 ${condition}.geno.pca | head -n ${params.n_geno_pcs} >> ${condition}.covariates.txt
+        | csvtk transpose -t > ${study_qtl_group}.geno.pca
+    head -n ${params.n_pheno_pcs + 1} $phenotype_pca > ${study_qtl_group}.covariates.txt    
+    set +o pipefail; tail -n+2 ${study_qtl_group}.geno.pca | head -n ${params.n_geno_pcs} >> ${study_qtl_group}.covariates.txt
     """
 }
 
-tuple_run_nominal
-        .join(covariates_run_nominal)
-        .set{tuple_run_nominal}
+// tuple_run_nominal
+//         .join(covariates_run_nominal)
+//         .set{tuple_run_nominal}
 
-tuple_run_permutation
-        .join(covariates_run_permutation)
-        .set{tuple_run_permutation}
+// tuple_run_permutation
+//         .join(covariates_run_permutation)
+//         .set{tuple_run_permutation}
 
 /*
  * STEP 6 - Run QTLtools in permutation mode
  */
 process run_permutation {
-    tag "${condition} - ${batch_index}/${params.n_batches}"
+    tag "${study_qtl_group} - ${batch_index}/${params.n_batches}"
     // publishDir "${params.outdir}/temp_batches", mode: 'copy'
     
     when:
@@ -365,14 +393,14 @@ process run_permutation {
 
     input:
     each batch_index from 1..params.n_batches
-    set condition, file(bed), file(bed_index), file(vcf), file(vcf_index), file(covariate) from tuple_run_permutation
+    set study_qtl_group, file(bed), file(bed_index), file(vcf), file(vcf_index), file(covariate) from tuple_run_permutation.join(covariates_run_permutation)
 
     output:
-    set val(condition), file("${condition}.permutation.batch.${batch_index}.${params.n_batches}.txt") into batch_files_merge_permutation_batches
+    set val(study_qtl_group), file("${study_qtl_group}.permutation.batch.${batch_index}.${params.n_batches}.txt") into batch_files_merge_permutation_batches
 
     script:
     """
-    QTLtools cis --vcf $vcf --bed $bed --cov $covariate --chunk $batch_index ${params.n_batches} --out ${condition}.permutation.batch.${batch_index}.${params.n_batches}.txt --window ${params.cis_window} --permute 10000 --grp-best
+    QTLtools cis --vcf $vcf --bed $bed --cov $covariate --chunk $batch_index ${params.n_batches} --out ${study_qtl_group}.permutation.batch.${batch_index}.${params.n_batches}.txt --window ${params.cis_window} --permute 10000 --grp-best
     """
 }
 
@@ -380,21 +408,21 @@ process run_permutation {
  * STEP 7 - Merge permutation batches from QTLtools
  */
 process merge_permutation_batches {
-    tag "${condition}"
-    publishDir "${params.outdir}/final", mode: 'copy'
+    tag "${study_qtl_group}"
+    publishDir "${params.outdir}/final/${study_qtl_group}", mode: 'copy'
     
     when:
     params.run_permutation
 
     input:
-    set condition, batch_file_names from batch_files_merge_permutation_batches.groupTuple(size: params.n_batches, sort: true)  
+    set study_qtl_group, batch_file_names from batch_files_merge_permutation_batches.groupTuple(size: params.n_batches, sort: true)  
 
     output:
-    file "${condition}.permuted.txt.gz"
+    file "${study_qtl_group}.permuted.txt.gz"
 
     script:
     """
-    cat ${batch_file_names.join(' ')} | bgzip > ${condition}.permuted.txt.gz
+    cat ${batch_file_names.join(' ')} | bgzip > ${study_qtl_group}.permuted.txt.gz
     """
 }
 
@@ -403,19 +431,19 @@ process merge_permutation_batches {
  * STEP 8 - Run QTLtools in nominal mode
  */
 process run_nominal {
-    tag "${condition} - ${batch_index}/${params.n_batches}"
+    tag "${study_qtl_group} - ${batch_index}/${params.n_batches}"
     // publishDir "${params.outdir}/temp_batches", mode: 'copy'
     
     input:
     each batch_index from 1..params.n_batches
-    set condition, file(bed), file(bed_index), file(vcf), file(vcf_index), file(covariate) from tuple_run_nominal
+    set study_qtl_group, file(bed), file(bed_index), file(vcf), file(vcf_index), file(covariate) from tuple_run_nominal.join(covariates_run_nominal)
 
     output:
-    set val(condition), file("${condition}.nominal.batch.${batch_index}.${params.n_batches}.txt") into batch_files_merge_nominal_batches
+    set study_qtl_group, file("${study_qtl_group}.nominal.batch.${batch_index}.${params.n_batches}.txt") into batch_files_merge_nominal_batches
 
     script:
     """
-	QTLtools cis --vcf $vcf --bed $bed --cov $covariate --chunk $batch_index ${params.n_batches} --out ${condition}.nominal.batch.${batch_index}.${params.n_batches}.txt --window ${params.cis_window} --nominal 1
+	QTLtools cis --vcf $vcf --bed $bed --cov $covariate --chunk $batch_index ${params.n_batches} --out ${study_qtl_group}.nominal.batch.${batch_index}.${params.n_batches}.txt --window ${params.cis_window} --nominal 1
     """
 }
 
@@ -423,18 +451,18 @@ process run_nominal {
  * STEP 9 - Merge nominal batches from QTLtools
  */
 process merge_nominal_batches {
-    tag "${condition}"
+    tag "${study_qtl_group}"
     // publishDir "${params.outdir}/Nominal_merged", mode: 'copy'
 
     input:
-    set condition, batch_file_names from batch_files_merge_nominal_batches.groupTuple(size: params.n_batches, sort: true)  
+    set study_qtl_group, batch_file_names from batch_files_merge_nominal_batches.groupTuple(size: params.n_batches, sort: true)  
 
     output:
-    set val(condition), file("${condition}.nominal.txt.gz") into nominal_merged_files_replace_space_tabs
+    set study_qtl_group, file("${study_qtl_group}.nominal.txt.gz") into nominal_merged_files_replace_space_tabs
 
     script:
     """
-    cat ${batch_file_names.join(' ')} | bgzip > ${condition}.nominal.txt.gz
+    cat ${batch_file_names.join(' ')} | bgzip > ${study_qtl_group}.nominal.txt.gz
     """
 }
 
@@ -442,18 +470,18 @@ process merge_nominal_batches {
  * STEP 10 - Replace spaces with tabs 
  */
 process replace_space_tabs {
-    tag "${condition}"
+    tag "${study_qtl_group}"
     // publishDir "${params.outdir}/Nominal_merged", mode: 'copy'
 	
     input:
-    set condition, file(nominal_merged) from nominal_merged_files_replace_space_tabs
+    set study_qtl_group, file(nominal_merged) from nominal_merged_files_replace_space_tabs
 
     output:
-    set val(condition), file("${condition}.nominal.tab.txt.gz") into nominal_merged_tab_sort_qtltools_output
+    set study_qtl_group, file("${study_qtl_group}.nominal.tab.txt.gz") into nominal_merged_tab_sort_qtltools_output
     
     script:
     """
-    gzip -dc $nominal_merged | awk -v OFS='\\t' '{{\$1=\$1; print \$0}}' | gzip > ${condition}.nominal.tab.txt.gz
+    gzip -dc $nominal_merged | awk -v OFS='\\t' '{{\$1=\$1; print \$0}}' | gzip > ${study_qtl_group}.nominal.tab.txt.gz
     """
 }
 
@@ -461,18 +489,18 @@ process replace_space_tabs {
  * STEP 11 - Add SNP coordinates to QTLTools output file
  */
 process sort_qtltools_output {
-    tag "${condition}"
-    publishDir "${params.outdir}/final", mode: 'copy'
+    tag "${study_qtl_group}"
+    publishDir "${params.outdir}/final/${study_qtl_group}", mode: 'copy'
 
     input:
-    set condition, file(nominal_merged) from nominal_merged_tab_sort_qtltools_output
+    set study_qtl_group, file(nominal_merged) from nominal_merged_tab_sort_qtltools_output
 
     output:
-    set val(condition), file("${condition}.nominal.sorted.txt.gz") into sorted_merged_nominal_index_qtltools_output
+    set study_qtl_group, file("${study_qtl_group}.nominal.sorted.txt.gz") into sorted_merged_nominal_index_qtltools_output
 
     script:
     """
-    gzip -dc $nominal_merged | LANG=C sort -k9,9 -k10,10n -k11,11n -S11G --parallel=8 | bgzip > ${condition}.nominal.sorted.txt.gz
+    gzip -dc $nominal_merged | LANG=C sort -k9,9 -k10,10n -k11,11n -S11G --parallel=8 | bgzip > ${study_qtl_group}.nominal.sorted.txt.gz
     """
 }
 
@@ -480,14 +508,14 @@ process sort_qtltools_output {
  * STEP 12 - Tabix-index QTLtools output files
  */
 process index_qtltools_output {
-    tag "${condition}"
-    publishDir "${params.outdir}/final", mode: 'copy'
+    tag "${study_qtl_group}"
+    publishDir "${params.outdir}/final/${study_qtl_group}", mode: 'copy'
 
     input:
-    set condition, file(sorted_merged_nominal) from sorted_merged_nominal_index_qtltools_output
+    set study_qtl_group, file(sorted_merged_nominal) from sorted_merged_nominal_index_qtltools_output
 
     output:
-    file "${condition}.nominal.sorted.txt.gz.tbi"
+    file "${study_qtl_group}.nominal.sorted.txt.gz.tbi"
 
     script:
     """
