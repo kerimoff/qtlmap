@@ -219,15 +219,11 @@ process create_QTLTools_input {
 
     input:
     set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file(vcf_variant_info) from variant_info_create_QTLTools_input
-    // file expression_matrix from expression_matrix_create_QTLTools_input.collect()
-    // file sample_metadata from sample_metadata_create_QTLTools_input.collect()
-    // file phenotype_metadata from phenotype_metadata_create_QTLTools_input.collect()
-    // file study_variant_info from variant_info_create_QTLTools_input.collect()
-    
+
     output: 
-    set study_name, file("*.bed") into qtl_group_beds 
-    set study_name, file(vcf), file("*.sample_names.txt") into qtl_group_samplenames 
-    set study_name, file("*.phenoPCA.tsv") into qtl_group_pheno_PCAs//, temp_qtl_group_pheno_PCAs
+    set study_name, file("*.bed") into qtl_group_beds
+    set study_name, file(vcf), file("*.sample_names.txt") into qtl_group_samplenames
+    set study_name, file("*.phenoPCA.tsv") into qtl_group_pheno_PCAs
 
     script:
     """
@@ -242,7 +238,6 @@ process create_QTLTools_input {
     """
 }
 
-// temp_qtl_group_pheno_PCAs.subscribe { println "PCA files ------------- : $it" }
 /*
  * STEP 2 - Compres and index input bed file
  */ 
@@ -251,19 +246,16 @@ process compress_bed {
     // publishDir "${params.outdir}/compressed_bed", mode: 'copy'
 
     input:
-    set study_name, file(bed_file) from qtl_group_beds
+    set study_name, file(bed_file) from qtl_group_beds.transpose()
 
     output:
-    set val("${study_name}_${bed_file.simpleName}"), file("${bed_file}.gz"), file("${bed_file}.gz.tbi") into compressed_beds//, temp_compressed_beds//, compressed_beds_run_nominal, compressed_beds_run_permutation
-    // set study_name, bed_file.simpleName, file("${bed_file}.gz.tbi") into compressed_bed_indexes //compressed_bed_indexes_perform_pca, compressed_bed_indexes_run_nominal, compressed_bed_indexes_run_permutation
+    set val("${study_name}_${bed_file.simpleName}"), file("${bed_file}.gz"), file("${bed_file}.gz.tbi") into compressed_beds
 
     script:
     """
     bgzip $bed_file && tabix -p bed ${bed_file}.gz
     """
 }
-
-// temp_compressed_beds.subscribe { println "comp beds files ------------- : $it" }
 
 /*
  * STEP 3 - Extract samples from vcf
@@ -273,7 +265,7 @@ process extract_samples {
     // publishDir "${params.outdir}/vcf", mode: 'copy'
 
     input:
-    set study_name, file(genotype_vcf), file(sample_names) from qtl_group_samplenames
+    set study_name, file(genotype_vcf), file(sample_names) from qtl_group_samplenames.transpose()
 
     output:
     set val("${study_name}_${sample_names.simpleName}"), file("${sample_names.simpleName}.vcf.gz") into vcfs_extract_variant_info, vcfs, vcfs_perform_pca, vcf_temp 
@@ -286,11 +278,7 @@ process extract_samples {
     """
 }
 
-// vcf_temp.subscribe { println "VCF files ------------- : $it" }
-// vcf_index_temp.subscribe { println "VCF index files ------------- : $it" }
-
 compressed_beds.join(vcfs).join(vcf_indexes).into{ tuple_run_nominal; tuple_run_permutation}
-// temp_joined_beds_vcf.subscribe { println "joined beds vcf files ------------- : $it" }
 
 /*
  * STEP 4 - Extract variant information from VCF
@@ -318,14 +306,14 @@ process extract_variant_info {
 }
 
 /*
- * STEP 3 - Extract samples from vcf
+ * This process is dummy for now. will change it basic map opeation of channel
  */
 process fake_process {
     tag "${study_name}_${pheno_pca.simpleName}"
     // publishDir "${params.outdir}/vcf", mode: 'copy'
 
     input:
-    set study_name, file(pheno_pca) from qtl_group_pheno_PCAs
+    set study_name, file(pheno_pca) from qtl_group_pheno_PCAs.transpose()
 
     output:
     set val("${study_name}_${pheno_pca.simpleName}"), file(pheno_pca) into qtl_group_pheno_PCAs_new//, temp_pca_condition
@@ -336,13 +324,7 @@ process fake_process {
     """
 }
 
-vcf_temp.subscribe { println "VCF files ------------- : $it" }
-
-// qtl_group_pheno_PCAs.map { item -> tuple("${item[0]}_${item[1].simpleName}", "${item[1]}" ) }.into {qtl_group_pheno_PCAs_new ; temp_pca_condition}
-// temp_pca_condition.subscribe { println "pca_mapped ------------- : $it" }
-
 qtl_group_pheno_PCAs_new.join(vcfs_perform_pca).set { tuple_perform_pca }
-// temp_debug.subscribe { println "vcf_pca_joined ------------- : $it" }
 
 /*
  * STEP 5 - Perform PCA on the genotype and phenotype data
@@ -372,14 +354,6 @@ process make_pca_covariates {
     set +o pipefail; tail -n+2 ${study_qtl_group}.geno.pca | head -n ${params.n_geno_pcs} >> ${study_qtl_group}.covariates.txt
     """
 }
-
-// tuple_run_nominal
-//         .join(covariates_run_nominal)
-//         .set{tuple_run_nominal}
-
-// tuple_run_permutation
-//         .join(covariates_run_permutation)
-//         .set{tuple_run_permutation}
 
 /*
  * STEP 6 - Run QTLtools in permutation mode

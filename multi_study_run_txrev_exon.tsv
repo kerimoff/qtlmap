@@ -1,0 +1,3 @@
+study_name	count_matrix	pheno_meta	sample_meta	vcf
+Alasoo_2018_txrev	/gpfs/hpc/home/kerimov/featurecounts_qc/normalised_results_Alasoo_2018/Alasoo_2018.txrevise_qnorm.tsv	metadata/phenotype_metadata/txrevise_Ensembl_96_phenotype_metadata.tsv.gz	metadata/sample_metadata/Alasoo_2018.tsv	/gpfs/hpc/home/a72094/datasets/controlled_access/Alasoo_2018/genotypes/Alasoo_2018_GRCh38.filtered.vcf.gz
+Alasoo_2018_exon	/gpfs/hpc/home/kerimov/featurecounts_qc/normalised_results_Alasoo_2018/Alasoo_2018_exon_counts_cqn_norm.tsv	metadata/phenotype_metadata/exon_counts_Ensembl_96_phenotype_metadata.tsv.gz	metadata/sample_metadata/Alasoo_2018.tsv	/gpfs/hpc/home/a72094/datasets/controlled_access/Alasoo_2018/genotypes/Alasoo_2018_GRCh38.filtered.vcf.gz

@@ -213,7 +213,9 @@ sample_names = purrr::map(qtltools_list, ~colnames(.)[-(1:6)])
 saveQTLToolsMatrices(sample_names, output_dir = output_dir, file_suffix = "sample_names.txt", col_names = FALSE)
 
 for (qtl_group_name in names(qtltools_list)) {
-  pheno_pca <- stats::prcomp(t(qtltools_list[[qtl_group_name]][-(1:6)]), center=TRUE, scale. = TRUE)
+  transposed_group <- t(qtltools_list[[qtl_group_name]][-(1:6)])
+  transposed_group <- transposed_group[, apply(transposed_group, 2, var) != 0]
+  pheno_pca <- stats::prcomp(transposed_group, center=TRUE, scale. = TRUE)
   pheno_pca_x <- t(pheno_pca$x) %>% as.data.frame() 
   
   # change PC column values as into pheno_PC
