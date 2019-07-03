@@ -87,30 +87,12 @@ if( workflow.profile == 'awsbatch') {
  * Create a channel for input read files
  */ 
 if(params.readPathsFile){
-
     // study_name	count_matrix	pheno_meta	sample_meta	vcf
     Channel.fromPath(params.readPathsFile)
         .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
         .splitCsv(header: true, sep: '\t', strip: true)
         .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta), file(row.vcf)]}
         .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples; temp_ch_vcf }
-
-    // Channel.fromPath(params.readPathsFile)
-    //     .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
-    //     .splitCsv(header: true, sep: '\t', strip: true)
-    //     .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta)]}
-    //     .set { create_QTLTools_input_wo_vcf }
-
-
-    // Channel.from(readPaths)
-    //         .map { row -> [ row[0], row[4] ] }
-    //         .ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
-    //         .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples; temp_ch_vcf }
-
-    // Channel.from(readPaths)
-    //         .map { row -> [ row[0], row[1], row[2], row[3] ] }
-    //         .ifEmpty { exit 1, "params.readPaths was empty - no input files supplied" }
-    //         .into { create_QTLTools_input_wo_vcf ; create_QTLTools_input_wo_vcf_temp}
 } else {
      Channel
          .fromPath( params.expression_matrix)
@@ -128,12 +110,7 @@ if(params.readPathsFile){
          .fromPath( params.genotype_vcf )
          .ifEmpty { exit 1, "Cannot find any genotype vcf file: ${params.genotype_vcf}\n" }
          .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples }
-         
  }
-
-
-//temp_ch_vcf.subscribe { println "############## vcf file channel: $it" }
-// create_QTLTools_input_wo_vcf_temp.subscribe { println "############## qtltools input file channel: $it" }
 
 // Header log info
 log.info """=======================================================
@@ -180,7 +157,6 @@ if(workflow.profile == 'awsbatch'){
 if(params.email) summary['E-mail Address'] = params.email
 log.info summary.collect { k,v -> "${k.padRight(21)}: $v" }.join("\n")
 log.info "========================================="
-
 
 /*
  * STEP 0 - Extract variant information from VCF
@@ -462,8 +438,6 @@ process index_qtltools_output {
     tabix -s9 -b10 -e11 -f $sorted_merged_nominal
     """
 }
-
-// TODO: try to use each input repeater for permutations
 
 /*
  * Completion e-mail notification
