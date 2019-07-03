@@ -417,30 +417,11 @@ process merge_nominal_batches {
     set study_qtl_group, batch_file_names from batch_files_merge_nominal_batches.groupTuple(size: params.n_batches, sort: true)  
 
     output:
-    set study_qtl_group, file("${study_qtl_group}.nominal.txt.gz") into nominal_merged_files_replace_space_tabs
-
-    script:
-    """
-    cat ${batch_file_names.join(' ')} | bgzip > ${study_qtl_group}.nominal.txt.gz
-    """
-}
-
-/*
- * STEP 10 - Replace spaces with tabs 
- */
-process replace_space_tabs {
-    tag "${study_qtl_group}"
-    // publishDir "${params.outdir}/Nominal_merged", mode: 'copy'
-	
-    input:
-    set study_qtl_group, file(nominal_merged) from nominal_merged_files_replace_space_tabs
-
-    output:
     set study_qtl_group, file("${study_qtl_group}.nominal.tab.txt.gz") into nominal_merged_tab_sort_qtltools_output
-    
+
     script:
     """
-    gzip -dc $nominal_merged | awk -v OFS='\\t' '{{\$1=\$1; print \$0}}' | gzip > ${study_qtl_group}.nominal.tab.txt.gz
+    cat ${batch_file_names.join(' ')} | csvtk space2tab -T | bgzip > ${study_qtl_group}.nominal.tab.txt.gz
     """
 }
 
