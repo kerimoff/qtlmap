@@ -223,7 +223,7 @@ process create_QTLTools_input {
     output: 
     set study_name, file("*.bed") into qtl_group_beds
     set study_name, file(vcf), file("*.sample_names.txt") into qtl_group_samplenames
-    set study_name, file("*.phenoPCA.tsv") into qtl_group_pheno_PCAs
+    set study_name, file("*.phenoPCA.tsv") into qtl_group_pheno_PCAs, temp_qtl_group_pheno_PCAs
 
     script:
     """
@@ -305,26 +305,11 @@ process extract_variant_info {
     }
 }
 
-/*
- * This process is dummy for now. will change it basic map opeation of channel
- */
-process fake_process {
-    tag "${study_name}_${pheno_pca.simpleName}"
-    // publishDir "${params.outdir}/vcf", mode: 'copy'
-
-    input:
-    set study_name, file(pheno_pca) from qtl_group_pheno_PCAs.transpose()
-
-    output:
-    set val("${study_name}_${pheno_pca.simpleName}"), file(pheno_pca) into qtl_group_pheno_PCAs_new//, temp_pca_condition
-
-    script:
-    """
-    echo faking_set
-    """
-}
-
-qtl_group_pheno_PCAs_new.join(vcfs_perform_pca).set { tuple_perform_pca }
+// Join phenotype_PCA and VCF file channels by {study_name}_{qtl_group} key
+qtl_group_pheno_PCAs.transpose()
+    .map { study_name, pheno_pca_file -> [ "${study_name}_${pheno_pca_file.simpleName}".toString(), pheno_pca_file ] }
+    .join(vcfs_perform_pca)
+    .set {tuple_perform_pca}
 
 /*
  * STEP 5 - Perform PCA on the genotype and phenotype data
