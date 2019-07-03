@@ -327,7 +327,7 @@ process make_pca_covariates {
 
     script:
     """
-    plink2 --vcf $vcf --vcf-half-call h --indep-pairwise 50000 200 0.05 --out ${study_qtl_group}_pruned_variants --threads ${task.cpus} --memory 12000
+    plink2 --vcf $vcf --vcf-half-call h --indep-pairwise 50000 200 0.05 --out ${study_qtl_group}_pruned_variants --threads ${task.cpus} --memory ${task.memory.mega}
     plink2 --vcf $vcf --vcf-half-call h --extract ${study_qtl_group}_pruned_variants.prune.in --make-bed --out ${study_qtl_group}_pruned
     plink2 -bfile ${study_qtl_group}_pruned --pca ${params.n_geno_pcs} header tabs
     cat plink.eigenvec \\
