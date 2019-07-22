@@ -8,18 +8,20 @@ saveQTLToolsMatrices <- function(data_list, output_dir, file_suffix = "bed", col
   #Save each matrix as a separate txt file
   for (sn in names(data_list)){
     file_path = file.path(output_dir, paste(sn, file_suffix, sep = "."))
-    print(file_path)
+    message(file_path)
+    message(paste0("Dimensions of the output file are: ", paste(dim(data_list[[sn]]), collapse = " ")))
     write.table(data_list[[sn]], file_path, sep = "\t", quote = FALSE, row.names = FALSE, col.names = col_names)
   }
 }
 
 # divide count_matrix according to sample_metadata file of each qtlgroup
-convertDFtoQTLtools <- function(sample_meta_qtlgroup, count_matrix, phenotype_data){
+convertDFtoQTLtools <- function(sample_meta_qtlgroup, count_matrix, phenotype_data, quantile_tpms = NULL, tpm_thres = 0.1){
   #Make sure that all required columns are present
   assertthat::assert_that(assertthat::has_name(phenotype_data, "chromosome"))
   assertthat::assert_that(assertthat::has_name(phenotype_data, "phenotype_pos"))
   assertthat::assert_that(assertthat::has_name(phenotype_data, "phenotype_id"))
   assertthat::assert_that(assertthat::has_name(phenotype_data, "group_id"))
+  assertthat::assert_that(assertthat::has_name(phenotype_data, "gene_id"))
   assertthat::assert_that(assertthat::has_name(phenotype_data, "strand"))
   
   assertthat::assert_that(assertthat::has_name(sample_meta_qtlgroup, "sample_id"))
@@ -39,14 +41,40 @@ convertDFtoQTLtools <- function(sample_meta_qtlgroup, count_matrix, phenotype_da
   count_matrix_group[,names(count_matrix_group) != "phenotype_id"] <- 
     round(count_matrix_group[,names(count_matrix_group) != "phenotype_id"], 3) #Round to three digits
   
-  pheno_data_filtered <- pheno_data %>% dplyr::filter(phenotype_id %in% count_matrix_group$phenotype_id)
+  if(!is.null(quantile_tpms)){
+    message("Filter count matrix by quntile TPMs")
+    
+    #Check that required columns exist
+    assertthat::assert_that(assertthat::has_name(quantile_tpms, "qtl_group"))
+    assertthat::assert_that(assertthat::has_name(quantile_tpms, "median_tpm"))
+    assertthat::assert_that(assertthat::has_name(quantile_tpms, "phenotype_id"))
+    
+    #Find expressed genes
+    selected_qtl_group = sample_meta_qtlgroup$qtl_group[1]
+    not_expressed_genes = dplyr::filter(quantile_tpms, qtl_group == selected_qtl_group, median_tpm < tpm_thres)
+    
+    #Find expressed phenotyes
+    expressed_phenotypes = setdiff(phenotype_data$gene_id, not_expressed_genes$phenotype_id)
+
+    #Filter count matrix by expressed phenotypes
+    count_matrix_group = dplyr::filter(count_matrix_group, phenotype_id %in% expressed_phenotypes)
+  }
   
+  
+  pheno_data_filtered <- pheno_data %>% dplyr::filter(phenotype_id %in% count_matrix_group$phenotype_id)
+
   #Make QTLtools phenotype table
   res = count_matrix_group %>%
     dplyr::select(phenotype_id, dplyr::everything()) %>%
     dplyr::left_join(pheno_data_filtered, ., by = "phenotype_id") %>%
     dplyr::arrange()
   
+  message("Exclude phenotypes with zero variance")
+  mat = as.matrix(res[,-(1:6)])
+  var_vector = apply(mat, 1, var)
+  print(length(var_vector))
+  res = res[var_vector > 0,]
+
   return(res)
 }
 
@@ -112,6 +140,8 @@ option_list <- list(
               help="Expression matrix file path with gene phenotype-id in rownames and sample-is in columnnames", metavar = "type"),
   optparse::make_option(c("-v", "--variant-info"), type="character", default=NULL,
               help="Variant information file path.", metavar = "type"),
+  optparse::make_option(c("-t", "--tpm_file"), type="character", default=NULL,
+                        help="File containing the 95% quantile TPM values for each gene in each qtl group (phenotype_id, qtl_group, median_tpm).", metavar = "type"),
   optparse::make_option(c("-o", "--outdir"), type="character", default="./QTLTools_input_files",
               help="Path to the output directory.", metavar = "type"),
   optparse::make_option(c("-c","--cisdistance"), type="integer", default=1000000, 
@@ -129,6 +159,7 @@ variant_info_path = opt$v
 output_dir = opt$o
 cis_distance = opt$c
 cis_min_var = opt$m
+tpm_file = opt$t
 
 message("------ Options parsed ------")
 message(paste0("gene_meta_path: ", phenotype_meta_path))
@@ -138,18 +169,27 @@ message(paste0("variant_info_path: ", variant_info_path))
 message(paste0("output_dir: ", output_dir))
 message(paste0("cis_distance: ", cis_distance))
 message(paste0("cis_min_var: ", cis_min_var))
+message(paste0("tpm_file: ", tpm_file))
+
 
 message(" ## Reading gene metadata file")
-phenotype_data <- utils::read.delim(phenotype_meta_path, quote = "", header = TRUE) %>% base::as.data.frame()
+phenotype_data <- utils::read.delim(phenotype_meta_path, quote = "", header = TRUE, stringsAsFactors = FALSE) %>% base::as.data.frame()
 
 message(" ## Reading sample metadata file")
-sample_metadata <- utils::read.delim(sample_meta_path, quote = "", header = TRUE) %>% base::as.data.frame()
+sample_metadata <- utils::read.delim(sample_meta_path, quote = "", header = TRUE, stringsAsFactors = FALSE) %>% base::as.data.frame()
 
 message(" ## Reading expression matrix")
-count_matrix <- utils::read.delim(expression_matrix_path, quote = "", header = TRUE) %>% base::as.data.frame() 
+count_matrix <- utils::read.delim(expression_matrix_path, quote = "", header = TRUE, stringsAsFactors = FALSE) %>% base::as.data.frame() 
 
 message(" ## Importing variant info")
 var_info = importVariantInformation(variant_info_path)
+
+quantile_tpms = NULL
+if (!is.null(tpm_file)){
+  message(" ## Importing 95% quantile TPMs")
+  quantile_tpms = read.table(tpm_file, header = T, stringsAsFactors = FALSE) %>% 
+    dplyr::as_tibble()
+}
 
 #Check that all required columns are there
 #Check phenotype metadata
@@ -157,6 +197,7 @@ assertthat::assert_that(assertthat::has_name(phenotype_data, "chromosome"))
 assertthat::assert_that(assertthat::has_name(phenotype_data, "phenotype_pos"))
 assertthat::assert_that(assertthat::has_name(phenotype_data, "strand"))
 assertthat::assert_that(assertthat::has_name(phenotype_data, "phenotype_id"))
+assertthat::assert_that(assertthat::has_name(phenotype_data, "gene_id"))
 
 #Check variant information
 assertthat::assert_that(assertthat::has_name(var_info, "chr"))
@@ -203,9 +244,11 @@ sample_meta_qtlgroup_df_list = purrr::map(group_list, ~sample_metadata[sample_me
 qtltools_list = purrr::map(sample_meta_qtlgroup_df_list, 
                            ~convertDFtoQTLtools(sample_meta_qtlgroup = ., 
                                                 count_matrix = count_matrix_cis_filter, 
-                                                phenotype_data = phenotype_data))
+                                                phenotype_data = phenotype_data,
+                                                quantile_tpms = quantile_tpms, 
+                                                tpm_thres = 1))
 
-message(" ## Generating QTLgrouped files ")
+message(" ## Generating BED files split by qtl_group ")
 saveQTLToolsMatrices(qtltools_list, output_dir = output_dir, file_suffix = "bed")
 
 #Extract sample names
