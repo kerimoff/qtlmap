@@ -91,8 +91,8 @@ if(params.readPathsFile){
     Channel.fromPath(params.readPathsFile)
         .ifEmpty { error "Cannot find any readPathsFile file in: ${params.readPathsFile}" }
         .splitCsv(header: true, sep: '\t', strip: true)
-        .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta) ,file(row.sample_meta), file(row.vcf)]}
-        .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples; temp_ch_vcf }
+        .map{row -> [ row.study_name, file(row.count_matrix), file(row.pheno_meta), file(row.sample_meta), file(row.vcf), file(row.tpm_file)]}
+        .set { genotype_vcf_extract_variant_info }
 } else {
      Channel
          .fromPath( params.expression_matrix)
@@ -109,7 +109,7 @@ if(params.readPathsFile){
     Channel
          .fromPath( params.genotype_vcf )
          .ifEmpty { exit 1, "Cannot find any genotype vcf file: ${params.genotype_vcf}\n" }
-         .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples }
+         .set { genotype_vcf_extract_variant_info }
  }
 
 // Header log info
@@ -166,10 +166,10 @@ process extract_all_variant_info {
     // publishDir "${params.outdir}/final/${study_name}", mode: 'copy'
 
     input:
-    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf) from genotype_vcf_extract_variant_info
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file(tpm_file) from genotype_vcf_extract_variant_info
     
     output:
-    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file("${vcf.simpleName}.variant_information.txt.gz") into variant_info_create_QTLTools_input
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file("${vcf.simpleName}.variant_information.txt.gz"), file(tpm_file) into variant_info_create_QTLTools_input
 
     script:
     if (params.is_imputed) {
@@ -194,7 +194,7 @@ process create_QTLTools_input {
     }
 
     input:
-    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file(vcf_variant_info) from variant_info_create_QTLTools_input
+    set study_name, file(expression_matrix), file(phenotype_metadata), file(sample_metadata), file(vcf), file(vcf_variant_info), file(tpm_file) from variant_info_create_QTLTools_input
 
     output: 
     set study_name, file("*.bed") into qtl_group_beds
@@ -208,6 +208,7 @@ process create_QTLTools_input {
         -s "$sample_metadata" \\
         -e "$expression_matrix" \\
         -v "$vcf_variant_info" \\
+        -t "$tpm_file" \\
         -o "." \\
         -c ${params.cis_window} \\
         -m ${params.mincisvariant}
