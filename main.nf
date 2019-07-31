@@ -44,7 +44,8 @@ def helpMessage() {
       --cis_window                  The window where to search for associated variants around the phenotype (default: 1000000)
       --mincisvariant               Minimum variants needed to be found in cis_window (default: 56)   
       --n_batches                   Number of parallel batches to run QTL Mapping per sample (default: 400)
-      --is_imputed                  Is the genotype input file imputed? (default: true)
+      --is_imputed                  Does the genotype VCF file contain R2 value in the INFO field? (default: true)
+      --run_permutation             Calculate permuation p-values for each phenotype group (group_id in the phenotype metadata file) (default: false)
 
     Other options:
       --outdir                      The output directory where the results will be saved
@@ -96,20 +97,25 @@ if(params.readPathsFile){
 } else {
      Channel
          .fromPath( params.expression_matrix)
-         .ifEmpty { exit 1, "Cannot find any expression_matrix file: ${params.expression_matrix}\n" }
+         .ifEmpty { exit 1, "Cannot find the expression matrix file: ${params.expression_matrix}\n" }
          .set { expression_matrix_create_QTLTools_input}
      Channel
          .fromPath( params.sample_metadata )
-         .ifEmpty { exit 1, "Cannot find any sample metadata file: ${params.sample_metadata}\n" }
+         .ifEmpty { exit 1, "Cannot find the sample metadata file: ${params.sample_metadata}\n" }
          .set { sample_metadata_create_QTLTools_input}   
     Channel
          .fromPath( params.phenotype_metadata )
-         .ifEmpty { exit 1, "Cannot find any phenotype metadata file: ${params.phenotype_metadata}\n" }
+         .ifEmpty { exit 1, "Cannot find the phenotype metadata file: ${params.phenotype_metadata}\n" }
          .set { phenotype_metadata_create_QTLTools_input}
     Channel
          .fromPath( params.genotype_vcf )
-         .ifEmpty { exit 1, "Cannot find any genotype vcf file: ${params.genotype_vcf}\n" }
-         .set { genotype_vcf_extract_variant_info }
+         .ifEmpty { exit 1, "Cannot find the genotype vcf file: ${params.genotype_vcf}\n" }
+         .into { genotype_vcf_extract_variant_info; genotype_vcf_extract_samples }
+    Channel
+         .fromPath( params.tpm_file )
+         .ifEmpty { exit 1, "Cannot find the TPM file: ${params.tpm_file}\n" }
+         .set { tpm_file_create_QTLTools_input }
+         
  }
 
 // Header log info
@@ -130,9 +136,11 @@ summary['Expression Matrix']    = params.expression_matrix
 summary['Phenotype Metadata']   = params.phenotype_metadata
 summary['Sample Metadata']      = params.sample_metadata
 summary['Genotype VCF file']    = params.genotype_vcf
+summary['TPM file']             = params.tpm_file
 summary['Cis window']           = params.cis_window
 summary['Minimum Cis variants'] = params.mincisvariant
 summary['Is imputed']           = params.is_imputed
+summary['Permutation run']      = params.run_permutation
 summary['# of batches']         = params.n_batches
 summary['# of phenotype pcs']   = params.n_pheno_pcs
 summary['# of genotype pcs']    = params.n_geno_pcs

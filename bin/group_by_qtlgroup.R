@@ -55,9 +55,11 @@ convertDFtoQTLtools <- function(sample_meta_qtlgroup, count_matrix, phenotype_da
     
     #Find expressed phenotyes
     expressed_phenotypes = setdiff(phenotype_data$gene_id, not_expressed_genes$phenotype_id)
+    message(paste0("Number of expressed genes included in the analysis: ", length(expressed_phenotypes)))
+    expressed_phenotype_metadata = dplyr::filter(phenotype_data, gene_id %in% expressed_phenotypes)
 
     #Filter count matrix by expressed phenotypes
-    count_matrix_group = dplyr::filter(count_matrix_group, phenotype_id %in% expressed_phenotypes)
+    count_matrix_group = dplyr::filter(count_matrix_group, phenotype_id %in% expressed_phenotype_metadata$phenotype_id)
   }
   
   
@@ -161,6 +163,11 @@ cis_distance = opt$c
 cis_min_var = opt$m
 tpm_file = opt$t
 
+#Convert null string to NULL
+if(tpm_file == "null"){
+  tpm_file = NULL
+}
+
 message("------ Options parsed ------")
 message(paste0("gene_meta_path: ", phenotype_meta_path))
 message(paste0("sample_meta_path: ", sample_meta_path))
@@ -180,6 +187,7 @@ sample_metadata <- utils::read.delim(sample_meta_path, quote = "", header = TRUE
 
 message(" ## Reading expression matrix")
 count_matrix <- utils::read.delim(expression_matrix_path, quote = "", header = TRUE, stringsAsFactors = FALSE) %>% base::as.data.frame() 
+print(count_matrix[1:6,1:6])
 
 message(" ## Importing variant info")
 var_info = importVariantInformation(variant_info_path)
@@ -203,10 +211,19 @@ assertthat::assert_that(assertthat::has_name(phenotype_data, "gene_id"))
 assertthat::assert_that(assertthat::has_name(var_info, "chr"))
 assertthat::assert_that(assertthat::has_name(var_info, "pos"))
 
+#Check count matrix
+assertthat::assert_that(assertthat::has_name(count_matrix, "phenotype_id"))
+
 #Check sample metadata
 assertthat::assert_that(assertthat::has_name(sample_metadata, "genotype_id"))
 assertthat::assert_that(assertthat::has_name(sample_metadata, "sample_id"))
 assertthat::assert_that(assertthat::has_name(sample_metadata, "qtl_group"))
+
+message("Keep samples that are present both in the expression data and sample metdata")
+shared_samples = intersect(sample_metadata$sample_id, colnames(count_matrix)[-1])
+message(paste0("Number of samples included in the analysis: ", length(shared_samples)))
+sample_metadata = dplyr::filter(sample_metadata, sample_id %in% shared_samples)
+count_matrix = count_matrix[,c("phenotype_id", shared_samples)]
 
 
 message(" ## Making gene ranges")
